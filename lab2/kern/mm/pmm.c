@@ -34,7 +34,8 @@ static void check_alloc_page(void);
 
 // init_pmm_manager - initialize a pmm_manager instance
 static void init_pmm_manager(void) {
-    pmm_manager = &default_pmm_manager;
+    // pmm_manager = &default_pmm_manager;
+    pmm_manager = &best_fit_pmm_manager;
     cprintf("memory management: %s\n", pmm_manager->name);
     pmm_manager->init();
 }
@@ -99,14 +100,21 @@ static void page_init(void) {
 
     extern char end[];
 
-    npage = maxpa / PGSIZE;
+    npage = maxpa / PGSIZE; //总共的页数
     //kernel在end[]结束, pages是剩下的页的开始
-    pages = (struct Page *)ROUNDUP((void *)end, PGSIZE);
+    pages = (struct Page *)ROUNDUP((void *)end, PGSIZE); // 将kernel的地址按照页大小padding
 
     for (size_t i = 0; i < npage - nbase; i++) {
         SetPageReserved(pages + i);
     }
 
+    /**
+     * pages: kernel结束后的起始地址
+     * pages之后先存放(npage - nbase)个Page结构体
+     * 剩下的内存是mem_begin到mem_end，存放实际的物理页面
+     * PPN(addr)从页面地址中获取页号
+     *
+     */
     uintptr_t freemem = PADDR((uintptr_t)pages + sizeof(struct Page) * (npage - nbase));
 
     mem_begin = ROUNDUP(freemem, PGSIZE);
