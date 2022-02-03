@@ -34,7 +34,10 @@ static int
 _clock_init_mm(struct mm_struct *mm)
 {     //TODO
      //cprintf(" mm->sm_priv %x in fifo_init_mm\n",mm->sm_priv);
-     return 0;
+    list_init(&pra_list_head);
+    mm->sm_priv = &pra_list_head;
+    curr_ptr = mm->sm_priv;
+    return 0;
 }
 /*
  * (3)_fifo_map_swappable: According FIFO PRA, we should link the most recent arrival page at the back of pra_list_head qeueue
@@ -44,9 +47,13 @@ _clock_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, in
 {
  //TODO
     //record the page access situlation
-    /*LAB3 EXERCISE 2: YOUR CODE*/ 
+    /*LAB3 EXERCISE 2: YOUR CODE*/
     //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
-    page->visited = 1;
+    // page->visited = 1; // useless
+    list_entry_t * head = (list_entry_t*) mm->sm_priv;
+    list_entry_t * entry = &(page->pra_page_link);
+    assert(entry != NULL && head != NULL);
+    list_add(head, entry);
     return 0;
 }
 /*
@@ -58,10 +65,32 @@ _clock_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tic
 {
      //TODO
      /* Select the victim */
-     /*LAB3 EXERCISE 2: YOUR CODE*/ 
+     /*LAB3 EXERCISE 2: YOUR CODE*/
      //(1)  unlink the  earliest arrival page in front of pra_list_head qeueue
      //(2)  set the addr of addr of this page to ptr_page
-    
+    // 当前指针指向"最近最少用"的，从这个往prev找，就是从最老的往年轻的找。
+    list_entry_t *head = (list_entry_t*)mm->sm_priv;
+    assert(head != NULL);
+    // TODO: what is in_tick for ??
+    // 第二次查找一定能找到
+    while (true) {
+        if (curr_ptr == head) { curr_ptr = head->prev; }
+        assert(curr_ptr != head);
+        struct Page *p = le2page(curr_ptr, pra_page_link);
+        pte_t * ptep = get_pte(mm->pgdir, p->pra_vaddr, 0);
+        assert(ptep != NULL);
+        if (!(*ptep & PTE_A)) { // 已读位=0
+            // choose
+            list_entry_t *target_le = curr_ptr;
+            curr_ptr = list_prev(curr_ptr);
+            list_del(curr_ptr);
+            *ptr_page = p;
+            break;
+        } else {
+            *ptep &= ~PTE_A;    //取消已读位
+            curr_ptr = list_prev(curr_ptr);
+        }
+    }
     return 0;
 }
 static int
@@ -99,7 +128,7 @@ _clock_check_swap(void) {
     *(unsigned char *)0x1000 = 0x0a;
     assert(pgfault_num==6);
     ++ score; cprintf("grading %d/%d points", score, totalscore);
-#else 
+#else
     *(unsigned char *)0x3000 = 0x0c;
     assert(pgfault_num==4);
     *(unsigned char *)0x1000 = 0x0a;
