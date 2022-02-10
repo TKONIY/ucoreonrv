@@ -371,7 +371,7 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
         // call get_pte to find process B's pte according to the addr start. If
         // pte is NULL, just alloc a PT
         if (*ptep & PTE_V) {
-            if ((nptep = get_pte(to, start, 1)) == NULL) {
+            if ((nptep = get_pte(to, start, 1)) == NULL) { // get_pte() 如果pte是null就会分配一个
                 return -E_NO_MEM;
             }
             uint32_t perm = (*ptep & PTE_USER);
@@ -400,6 +400,10 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
              * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
              * (4) build the map of phy addr of npage with the linear addr start
              */
+            void *src_kvaddr = page2kva(page);
+            void *dst_kvaddr = page2kva(npage);
+            memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
+            page_insert(to, npage, start, perm);
             assert(ret == 0);
         }
         start += PGSIZE;

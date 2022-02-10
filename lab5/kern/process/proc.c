@@ -409,7 +409,7 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
 
     //LAB5 (update LAB4 steps)
    /* Some Functions
-    *    set_links:  set the relation links of process.  ALSO SEE: remove_links:  lean the relation links of process 
+    *    set_links:  set the relation links of process.  ALSO SEE: remove_links:  lean the relation links of process
     *    -------------------
     *    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
     *    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
@@ -486,7 +486,7 @@ do_exit(int error_code) {
         while (current->cptr != NULL) {
             proc = current->cptr;
             current->cptr = proc->optr;
-    
+
             proc->yptr = NULL;
             if ((proc->optr = initproc->cptr) != NULL) {
                 initproc->cptr->yptr = proc;
@@ -620,7 +620,7 @@ load_icode(unsigned char *binary, size_t size) {
     assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-2*PGSIZE , PTE_USER) != NULL);
     assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-3*PGSIZE , PTE_USER) != NULL);
     assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-4*PGSIZE , PTE_USER) != NULL);
-    
+
     //(5) set current process's mm, sr3, and set CR3 reg = physical addr of Page Directory
     mm_count_inc(mm);
     current->mm = mm;
@@ -640,7 +640,19 @@ load_icode(unsigned char *binary, size_t size) {
      *          tf->status should be appropriate for user program (the value of sstatus)
      *          hint: check meaning of SPP, SPIE in SSTATUS, use them by SSTATUS_SPP, SSTATUS_SPIE(defined in risv.h)
      */
-    
+    /**
+     * The SPP bit indicates the privilege level at which a hart was executing before entering supervisor mode. When a
+     * trap is taken, SPP is set to 0 if the trap originated from user mode, or 1 otherwise. When an SRET instruction
+     * (see Section 3.2.2) is executed to return from the trap handler, the privilege level is set to user mode if the
+     * SPP bit is 0, or supervisor mode if the SPP bit is 1; SPP is then set to 0.
+     *
+     *  When the hart is running in user-mode, the value in SIE is ignored, and supervisor-level interrupts are enabled.
+     */
+    tf->gpr.sp = USTACKTOP;
+    tf->epc = elf->e_entry;
+    // tf->status = (read_csr(sstatus) | SSTATUS_SPP | SSTATUS_SPIE) & ~SSTATUS_SIE;
+    tf->status = sstatus & ~(SSTATUS_SPP); // SPIE is ignored
+
     ret = 0;
 out:
     return ret;
@@ -841,7 +853,6 @@ init_main(void *arg) {
     if (pid <= 0) {
         panic("create user_main failed.\n");
     }
-
     while (do_wait(0, NULL) == 0) {
         schedule();
     }
@@ -896,6 +907,7 @@ proc_init(void) {
 void
 cpu_idle(void) {
     while (1) {
+        cprintf("schedule\n");
         if (current->need_resched) {
             schedule();
         }
