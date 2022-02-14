@@ -221,7 +221,7 @@ sfs_bmap_get_sub_nolock(struct sfs_fs *sfs, uint32_t *entp, uint32_t index, bool
             return ret;
         }
     }
-    
+
     if ((ret = sfs_block_alloc(sfs, &ino)) != 0) {
         goto failed_cleanup;
     }
@@ -349,20 +349,22 @@ sfs_bmap_free_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, uint32_t index) 
  * @sin:      sfs inode in memory
  * @index:    the logical index of disk block in inode
  * @ino_store:the NO. of disk block
+ * 根据inode和inode中访问的index，查找disk block的index
+ * 涉及IO操作
  */
 static int
 sfs_bmap_load_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, uint32_t index, uint32_t *ino_store) {
     struct sfs_disk_inode *din = sin->din;
-    assert(index <= din->blocks);
+    assert(index <= din->blocks); // 输入的index不能超过inode表示的block个数
     int ret;
     uint32_t ino;
-    bool create = (index == din->blocks);
-    if ((ret = sfs_bmap_get_nolock(sfs, sin, index, create, &ino)) != 0) {
+    bool create = (index == din->blocks); // 如果index == block个数，则需要扩张
+    if ((ret = sfs_bmap_get_nolock(sfs, sin, index, create, &ino)) != 0) { // 从disk_inode里面找一级索引和二级索引
         return ret;
     }
     assert(sfs_block_inuse(sfs, ino));
     if (create) {
-        din->blocks ++;
+        din->blocks++;
     }
     if (ino_store != NULL) {
         *ino_store = ino;
@@ -403,7 +405,7 @@ sfs_dirent_read_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, int slot, stru
         return ret;
     }
     assert(sfs_block_inuse(sfs, ino));
-	// read the content of file entry in the disk block 
+	// read the content of file entry in the disk block
     if ((ret = sfs_rbuf(sfs, entry, sizeof(struct sfs_disk_entry), ino, 0)) != 0) {
         return ret;
     }
@@ -488,7 +490,7 @@ sfs_dirent_findino_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, uint32_t in
 }
 
 /*
- * sfs_lookup_once - find inode corresponding the file name in DIR's sin inode 
+ * sfs_lookup_once - find inode corresponding the file name in DIR's sin inode
  * @sfs:        sfs file system
  * @sin:        DIR sfs inode in memory
  * @name:       the file name in DIR
@@ -540,7 +542,7 @@ sfs_close(struct inode *node) {
     return vop_fsync(node);
 }
 
-/*  
+/*
  * sfs_io_nolock - Rd/Wr a file contentfrom offset position to offset+ length  disk blocks<-->buffer (in memroy)
  * @sfs:      sfs file system
  * @sin:      sfs inode in memory
@@ -594,12 +596,45 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
 	 * (1) If offset isn't aligned with the first block, Rd/Wr some content from offset to the end of the first block
 	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_buf_op
 	 *               Rd/Wr size = (nblks != 0) ? (SFS_BLKSIZE - blkoff) : (endpos - offset)
-	 * (2) Rd/Wr aligned blocks 
+	 * (2) Rd/Wr aligned blocks
 	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_block_op
      * (3) If end position isn't aligned with the last block, Rd/Wr some content from begin to the (endpos % SFS_BLKSIZE) of the last block
-	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_buf_op	
+	 *       NOTICE: useful function: sfs_bmap_load_nolock, sfs_buf_op
 	*/
 
+    blkoff = offset % SFS_BLKSIZE;
+    if (blkoff != 0) { // offset isn't aligned with the first block, read the target content of first block
+        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0)
+            goto out;
+        size = ((nblks != 0) ? (SFS_BLKSIZE - blkoff) : (endpos - offset));
+        if ((ret = sfs_buf_op(sfs, buf, size, ino, blkoff)) != 0)
+            goto out;
+        alen += size;
+        buf += size;
+        if (nblks == 0)
+            goto out;
+        nblks--, blkno++;
+    }
+    while (nblks > 0) {                // read/write aligned blocks, one by one
+        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
+            goto out;
+        }
+        size = SFS_BLKSIZE;
+        if ((sfs_block_op(sfs, buf, ino, 1) != 0)) {
+            goto out;
+        };
+        alen += size, buf += size, nblks--, blkno++;
+    }
+    if (endpos % SFS_BLKSIZE != 0) {    // read/write last block
+        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
+            goto out;
+        }
+        size = endpos % SFS_BLKSIZE;
+        if ((ret = sfs_buf_op(sfs, buf, size, ino, 0)) != 0) {
+            goto out;
+        }
+        alen += size;
+    }
 out:
     *alenp = alen;
     if (offset + alen > sin->din->size) {
@@ -684,7 +719,7 @@ sfs_fsync(struct inode *node) {
 
 /*
  *sfs_namefile -Compute pathname relative to filesystem root of the file and copy to the specified io buffer.
- *  
+ *
  */
 static int
 sfs_namefile(struct inode *node, struct iobuf *iob) {
@@ -770,7 +805,7 @@ sfs_getdirentry_sub_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, int slot, 
 
 /*
  * sfs_getdirentry - according to the iob->io_offset, calculate the dir entry's slot in disk block,
-                     get dir entry content from the disk 
+                     get dir entry content from the disk
  */
 static int
 sfs_getdirentry(struct inode *node, struct iobuf *iob) {
@@ -805,7 +840,7 @@ out:
 }
 
 /*
- * sfs_reclaim - Free all resources inode occupied . Called when inode is no longer in use. 
+ * sfs_reclaim - Free all resources inode occupied . Called when inode is no longer in use.
  */
 static int
 sfs_reclaim(struct inode *node) {
@@ -867,7 +902,7 @@ sfs_gettype(struct inode *node, uint32_t *type_store) {
     panic("invalid file type %d.\n", din->type);
 }
 
-/* 
+/*
  * sfs_tryseek - Check if seeking to the specified position within the file is legal.
  */
 static int
@@ -915,7 +950,7 @@ sfs_truncfile(struct inode *node, off_t len) {
         }
     }
     else if (tblks < nblks) {
-		// try to reduce the file size 
+		// try to reduce the file size
         while (tblks != nblks) {
             if ((ret = sfs_bmap_truncate_nolock(sfs, sin)) != 0) {
                 goto out_unlock;
